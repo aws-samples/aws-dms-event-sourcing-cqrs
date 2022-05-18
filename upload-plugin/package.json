@@ -1,0 +1,8 @@
+{
+  "name": "upload-plugin",
+  "version": "1.0.0",
+  "dependencies": {
+    "axios": "^0.24.0",
+    "follow-redirects": "^1.14.5"
+  }
+}

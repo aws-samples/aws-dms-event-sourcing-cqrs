@@ -1,17 +1,24 @@
-## My Project
+## Event Sourcing & CQRS with AWS Database Migration Service (DMS)
 
-TODO: Fill this README out!
+This repository contains 2 examples of implementing CQRS using AWS Database Migration Service (DMS).
 
-Be sure to:
+Both are deployed using Serverless Application Model (SAM) templates. For both deployments you can accept all the default parameters, unless you explicitly want to change any of them. If you don't have the SAM CLI installed locally, follow the instructions [in the SAM documentation](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-cli-install.html)
 
-* Change the title in this README
-* Edit your repository description on GitHub
+Ensure that you have the **dms-vpc-role** & **AWSServiceRoleForKafkaConnect** IAM roles already present in the target AWS account. These roles will have been created automatically if you have used DMS & MSK via the AWS console. If you have not, you can deploy the dms-vpc-role CloudFormation template included in this repository first:
 
-## Security
+```
+sam deploy --guided -t dms-vpc-role.yaml --capabilities CAPABILITY_NAMED_IAM
+```
 
-See [CONTRIBUTING](CONTRIBUTING.md#security-issue-notifications) for more information.
+To deploy the DMS only solution:
 
-## License
+```
+sam deploy --guided -t s3-event-store.yaml
+```
 
-This library is licensed under the MIT-0 License. See the LICENSE file.
+To deploy the DMS + Amazon Managed Streaming for Apache Kafka (MSK) solution:
 
+```
+sam build -t kafka-event-stream.yaml --use-container
+sam deploy --guided
+```

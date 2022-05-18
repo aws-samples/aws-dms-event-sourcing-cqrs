@@ -1,0 +1,7 @@
+{
+  "name": "get-broker",
+  "version": "1.0.0",
+  "dependencies": {
+    "axios": "^0.24.0"
+  }
+}

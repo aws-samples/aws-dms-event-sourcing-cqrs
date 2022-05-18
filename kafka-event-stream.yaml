@@ -1,0 +1,1031 @@
+---
+Transform: AWS::Serverless-2016-10-31
+
+Parameters:
+  ReplicationInstanceClass:
+    Type: String
+    Default: dms.t2.small
+    AllowedPattern: "^dms\\.[a-z][0-9].[a-zA-Z0-9]*$"
+    Description: Enter replication instance class. Default is dms.t2.small
+  SourceDatabaseInstanceClass:
+    Type: String
+    Default: db.t3.small
+    AllowedPattern: "^db\\.[a-z][0-9].[a-zA-Z0-9]*$"
+    Description: Enter replication instance class. Default is db.t3.small
+  SourceDatabaseName:
+    Type: String
+    Default: postgres
+    Description: Source database name
+  EnvironmentName:
+    Description: An environment name that is prefixed to resource names
+    Type: String
+    Default: MSKEventSourcing
+
+  VpcCIDR:
+    Description: Please enter the IP range (CIDR notation) for this VPC
+    Type: String
+    Default: 10.192.0.0/16
+
+  PublicSubnet1CIDR:
+    Description: Please enter the IP range (CIDR notation) for the public subnet in the first Availability Zone
+    Type: String
+    Default: 10.192.10.0/24
+
+  PublicSubnet2CIDR:
+    Description: Please enter the IP range (CIDR notation) for the public subnet in the second Availability Zone
+    Type: String
+    Default: 10.192.11.0/24
+
+  PrivateSubnet1CIDR:
+    Description: Please enter the IP range (CIDR notation) for the private subnet in the first Availability Zone
+    Type: String
+    Default: 10.192.20.0/24
+
+  PrivateSubnet2CIDR:
+    Description: Please enter the IP range (CIDR notation) for the private subnet in the second Availability Zone
+    Type: String
+    Default: 10.192.21.0/24
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Ref EnvironmentName
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Ref EnvironmentName
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Ref PublicSubnet1CIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Public Subnet (AZ1)
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Ref PublicSubnet2CIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Public Subnet (AZ2)
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Ref PrivateSubnet1CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Private Subnet (AZ1)
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Ref PrivateSubnet2CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Private Subnet (AZ2)
+
+  NatGateway1EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+
+  NatGateway2EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+
+  NatGateway1:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGateway1EIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+
+  NatGateway2:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGateway2EIP.AllocationId
+      SubnetId: !Ref PublicSubnet2
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Public Routes
+
+  DefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet2
+
+  PrivateRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Private Routes (AZ1)
+
+  DefaultPrivateRoute1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway1
+
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      SubnetId: !Ref PrivateSubnet1
+
+  PrivateRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Private Routes (AZ2)
+
+  DefaultPrivateRoute2:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway2
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      SubnetId: !Ref PrivateSubnet2
+
+  ReplicationSubnetGroup:
+    Properties:
+      ReplicationSubnetGroupDescription: !Ref EnvironmentName
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+    Type: "AWS::DMS::ReplicationSubnetGroup"
+
+  ReplicationInstance:
+    Properties:
+      ReplicationInstanceClass: !Ref ReplicationInstanceClass
+      PubliclyAccessible: false
+      ReplicationSubnetGroupIdentifier: !Ref ReplicationSubnetGroup
+      VpcSecurityGroupIds:
+        - !GetAtt VPC.DefaultSecurityGroup
+    Type: "AWS::DMS::ReplicationInstance"
+
+  DBSubnetGroup:
+    Properties:
+      DBSubnetGroupDescription: !Ref EnvironmentName
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+    Type: "AWS::RDS::DBSubnetGroup"
+
+  PostgreSQLSource:
+    Type: "AWS::RDS::DBInstance"
+    Properties:
+      DBInstanceIdentifier: !Ref EnvironmentName
+      DBName: !Ref SourceDatabaseName
+      DBInstanceClass: !Ref SourceDatabaseInstanceClass
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      DBParameterGroupName: !Ref RDSDBParameterGroup
+      DeletionProtection: true
+      AllocatedStorage: "100"
+      Engine: postgres
+      EngineVersion: "13.4"
+      MasterUsername: !Sub "{{resolve:secretsmanager:${DbAdminPassword}::username}}"
+      MasterUserPassword: !Sub "{{resolve:secretsmanager:${DbAdminPassword}::password}}"
+      PubliclyAccessible: false
+      StorageEncrypted: true
+      StorageType: gp2
+      VPCSecurityGroups:
+        - !GetAtt VPC.DefaultSecurityGroup
+
+  RDSDBParameterGroup:
+    Type: "AWS::RDS::DBParameterGroup"
+    Properties:
+      Description: Postgres with Replication
+      Family: postgres13
+      Parameters:
+        rds.logical_replication: "1"
+
+  PostgreSQLSourceEndpoint:
+    Properties:
+      DatabaseName: !Ref SourceDatabaseName
+      EndpointType: source
+      EngineName: postgres
+      ExtraConnectionAttributes: "PluginName=test_decoding"
+      Password: !Sub "{{resolve:secretsmanager:${DbAdminPassword}::password}}"
+      Port: 5432
+      ServerName: !GetAtt PostgreSQLSource.Endpoint.Address
+      Username: !Sub "{{resolve:secretsmanager:${DbAdminPassword}::username}}"
+    Type: "AWS::DMS::Endpoint"
+
+  EventStore:
+    Type: "AWS::S3::Bucket"
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - BucketKeyEnabled: true
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  GenerateLoadLambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./loadgenerator
+      Handler: index.lambda_handler
+      Runtime: nodejs14.x
+      Environment:
+        Variables:
+          SERVER: !GetAtt PostgreSQLSource.Endpoint.Address
+          USER: !Sub "{{resolve:secretsmanager:${DbAdminPassword}::username}}"
+          PWORD: !Sub "{{resolve:secretsmanager:${DbAdminPassword}::password}}"
+      VpcConfig:
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+        SecurityGroupIds:
+          - !GetAtt VPC.DefaultSecurityGroup
+      Timeout: 30
+
+  DbAdminPassword:
+    Type: "AWS::SecretsManager::Secret"
+    Properties:
+      Description: "This secret has a dynamically generated secret password."
+      GenerateSecretString:
+        SecretStringTemplate: '{"username": "opsadmin"}'
+        GenerateStringKey: "password"
+        PasswordLength: 30
+        ExcludeCharacters: '"@/\!;$+%:`'''
+
+  LoadGenRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - events.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSXrayWriteOnlyAccess
+      Path: "/"
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ["lambda:InvokeFunction", "lambda:InvokeFunctionAsync"]
+                Resource: [!GetAtt GenerateLoadLambdaFunction.Arn]
+
+  LoadGenRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: "Execute Lambda Function Every Minute"
+      RoleArn: !GetAtt LoadGenRole.Arn
+      ScheduleExpression: rate(1 minute)
+      Targets:
+        - Id: LambdaFunction
+          Arn: !GetAtt GenerateLoadLambdaFunction.Arn
+
+  LoadGenPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt GenerateLoadLambdaFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt LoadGenRule.Arn
+
+  CustomClusterConfigCreateRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: KafkaCreateConf
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "kafka:CreateConfiguration"
+                Resource: ["*"]
+
+  CustomEndpointCreateRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: KafkaCreateConf
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "kafka:GetBootstrapBrokers"
+                Resource: ["*"]
+        - PolicyName: DmsTestConnection
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "dms:CreateEndpoint"
+                Resource: ["*"]
+
+  CustomTestEndpointsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DmsTestConnection
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "dms:TestConnection"
+                  - "dms:DescribeConnections"
+                Resource: ["*"]
+
+  CustomClusterConfigLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.lambda_handler
+      Runtime: python3.7
+      Role: !GetAtt CustomClusterConfigCreateRole.Arn
+      Timeout: 900
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import json
+          import random
+          import string
+          kafka = boto3.client('kafka')
+          conf = bytes('auto.create.topics.enable = true', 'utf-8')
+          def randomString(stringLength=10):
+              letters = string.ascii_lowercase
+              return ''.join(random.choice(letters) for i in range(stringLength))
+          def lambda_handler(event, context):
+            print('Event is ' + json.dumps(event))
+            try:
+              if event['RequestType'] == 'Create':
+                print('Create stack call, MSK cluster config will be created')
+                r = kafka.create_configuration(
+                  Description='MSKCluster cluster configuration',
+                  KafkaVersions=[ '2.2.1'],
+                  Name=randomString(),
+                  ServerProperties=conf
+                )
+                conf_arn = r['Arn']
+                cfnresponse.send(event, context, cfnresponse.SUCCESS, {}, conf_arn)
+              elif (event['RequestType'] == 'Delete') or (event['RequestType'] == 'Update'):
+                cfnresponse.send(event, context, cfnresponse.SUCCESS, {}, '')
+            except Exception as e:
+              print(e)
+              cfnresponse.send(event, context, cfnresponse.FAILED, {}, '')
+  CustomClusterConfig:
+    Type: Custom::ClusterConfig
+    Properties:
+      ServiceToken: !GetAtt CustomClusterConfigLambda.Arn
+
+  MSKCluster:
+    Type: "AWS::MSK::Cluster"
+    Properties:
+      BrokerNodeGroupInfo:
+        ClientSubnets:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+        InstanceType: kafka.m5.large
+        SecurityGroups:
+          - !GetAtt VPC.DefaultSecurityGroup
+        StorageInfo:
+          EBSStorageInfo:
+            VolumeSize: 100
+      ConfigurationInfo:
+        Arn: !Ref CustomClusterConfig
+        Revision: 1
+      ClusterName: MSKCluster
+      EncryptionInfo:
+        EncryptionInTransit:
+          ClientBroker: TLS_PLAINTEXT
+          InCluster: true
+      EnhancedMonitoring: PER_TOPIC_PER_BROKER
+      KafkaVersion: 2.2.1
+      NumberOfBrokerNodes: 2
+
+  CustomKakfaEndpoint:
+    Type: Custom::KafkfaEndpoint
+    Properties:
+      ServiceToken: !GetAtt CustomKafkaEndpointLambda.Arn
+      KafkaCluster: !Ref MSKCluster
+
+  CustomKafkaEndpointLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.lambda_handler
+      Runtime: python3.7
+      Role: !GetAtt CustomEndpointCreateRole.Arn
+      Timeout: 900
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import json
+          kafka = boto3.client('kafka')
+          dms = boto3.client('dms')
+          def lambda_handler(event, context):
+            print('Event is ' + json.dumps(event))
+            try:
+              if event['RequestType'] == 'Create':
+                c_arn = event['ResourceProperties']['KafkaCluster']
+                b = kafka.get_bootstrap_brokers(ClusterArn=c_arn)
+                broker = b['BootstrapBrokerString'].split(',')[0]
+                print('Kafka broker is: ' + broker)
+                r = dms.create_endpoint(
+                      EndpointIdentifier='kafka-target',
+                      EndpointType='target',
+                      EngineName='kafka',
+                      KafkaSettings={
+                      'Broker': broker,
+                      'Topic': 'salesorder'
+                  }
+                )
+                k_ep = r['Endpoint']['EndpointArn']
+                print('Target endpoint is: ' + k_ep)
+                cfnresponse.send(event, context, cfnresponse.SUCCESS, {}, k_ep)
+              elif (event['RequestType'] == 'Delete') or (event['RequestType'] == 'Update'):
+                cfnresponse.send(event, context, cfnresponse.SUCCESS, {}, '')
+            except Exception as e:
+              print(e)
+              cfnresponse.send(event, context, cfnresponse.FAILED, {}, '')
+
+  TestConnAllEndpoints:
+    Type: Custom::TestConn
+    Properties:
+      ServiceToken: !GetAtt TestConnLambda.Arn
+      ReplEndpoint: !Ref ReplicationInstance
+      KafkaEndpoint: !Ref CustomKakfaEndpoint
+      PostgresEndpoint: !Ref PostgreSQLSourceEndpoint
+
+  TestConnLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.lambda_handler
+      Runtime: python3.7
+      Role: !GetAtt CustomTestEndpointsRole.Arn
+      Timeout: 900
+      Code:
+        ZipFile: |
+          import cfnresponse
+          import json
+          import boto3
+          def lambda_handler(event, context):
+              source_endpoint = event['ResourceProperties']['PostgresEndpoint']
+              kafka_endpoint = event['ResourceProperties']['KafkaEndpoint']
+              replication_inst = event['ResourceProperties']['ReplEndpoint']
+              if 'Create' in event['RequestType']:
+                  print ('This is a %s event' %(event['RequestType']))
+                  print('Checking connection for Source .....')
+                  source_result = check_connection(source_endpoint,replication_inst)
+                  print('Source result was %s' %(source_result))
+                  if 'success' in source_result:
+                        print('Proceeding to check connection for Kafka Target ....')
+                        kafka_result = check_connection(kafka_endpoint,replication_inst)
+                        print('Kafka Target result was %s' %(kafka_result))
+                        if 'success' in kafka_result:
+                          cfnresponse.send(event, context, cfnresponse.SUCCESS, {}, '')
+                        else:
+                          print('Kafka target connection failed')
+                          cfnresponse.send(event, context, cfnresponse.FAILED, {}, '')
+                  else:
+                      print('Source connection failed')
+                      cfnresponse.send(event, context, cfnresponse.FAILED, {}, '')
+              else:
+                  print('Delete event nothing will be done')
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {}, '')
+          def check_connection(endpoint,rep):
+              dms = boto3.client('dms')
+              dms.test_connection(ReplicationInstanceArn=rep,EndpointArn=endpoint)
+              waiter = dms.get_waiter('test_connection_succeeds')
+              waiter.wait(
+                  Filters=[
+                      {
+                          'Name': 'endpoint-arn',
+                          'Values': [endpoint]
+                      },
+                      {
+                          'Name': 'replication-instance-arn',
+                          'Values':[rep]
+                      }
+                  ]
+              )
+              status_conn_api = dms.describe_connections(
+                  Filters=[
+                      {
+                          'Name': 'endpoint-arn',
+                          'Values': [endpoint]
+                      },
+                      {
+                          'Name': 'replication-instance-arn',
+                          'Values': [rep]
+                      }
+                  ]
+              )
+              stat_task = status_conn_api['Connections'][0]['Status']
+              print('The connection test was %s' %(stat_task))
+              return (stat_task)
+
+  ReplicationTaskPostgreKafka:
+    Type: "AWS::DMS::ReplicationTask"
+    Properties:
+      MigrationType: full-load-and-cdc
+      ReplicationInstanceArn: !Ref ReplicationInstance
+      #hard coded value as the regex with stack name needs to be converted to lower case for task name
+      ReplicationTaskIdentifier: rds-kafka-task
+      ReplicationTaskSettings: >-
+        {"TargetMetadata":{"TargetSchema":"MASTER","SupportLobs":true,"LimitedSizeLobMode":true,"LobMaxSize":32},"sFullLoadSettings":{"TargetTablePrepMode":"DROP_AND_CREATE"},"Logging":{"EnableLogging":true,"LogComponents":[{"Id":"SOURCE_CAPTURE","Severity":"LOGGER_SEVERITY_DETAILED_DEBUG"},{"Id":"TASK_MANAGER","Severity":"LOGGER_SEVERITY_DETAILED_DEBUG"}]}}
+      SourceEndpointArn: !Ref PostgreSQLSourceEndpoint
+      TableMappings: >-
+        { "rules": [ { "rule-type": "selection", "rule-id": "1", "rule-name":
+        "1", "object-locator": { "schema-name": "public", "table-name":
+        "salesorder" }, "rule-action": "include" } ]}
+      TargetEndpointArn: !Ref CustomKakfaEndpoint
+
+  SalesOrderDynamoDBTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: "PAY_PER_REQUEST"
+      ContributorInsightsSpecification:
+        Enabled: true
+      AttributeDefinitions:
+        - AttributeName: "sales_order_id"
+          AttributeType: "S"
+      KeySchema:
+        - AttributeName: "sales_order_id"
+          KeyType: "HASH"
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+        SSEType: "KMS"
+      TableName: !Join ["-", [!Ref AWS::StackName, "SalesOrderTable"]]
+
+  KafkaToDynamoDBRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaMSKExecutionRole
+      Policies:
+        - PolicyName: DynamoDBPutItem
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "dynamodb:PutItem"
+                Resource: !GetAtt SalesOrderDynamoDBTable.Arn
+        - PolicyName: KafkaCreateConf
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "kafka:CreateConfiguration"
+                  - "kafka:GetBootstrapBrokers"
+                  - "kafka:DescribeCluster"
+                Resource: !Ref MSKCluster
+
+  EventRelayFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./kafka-dynamodb
+      Handler: index.lambda_handler
+      Runtime: nodejs14.x
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref SalesOrderDynamoDBTable
+      Role: !GetAtt KafkaToDynamoDBRole.Arn
+      Timeout: 30
+
+  EventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      FunctionName: !Ref EventRelayFunction
+      StartingPosition: LATEST
+      EventSourceArn: !Ref MSKCluster
+      Topics:
+        - salesorder
+
+  KafkaS3ConnectorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: kafkaconnect.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: KafkaConnectS3
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "s3:ListAllMyBuckets"
+                Resource: "arn:aws:s3:::*"
+              - Effect: Allow
+                Action:
+                  - "s3:ListBucket"
+                  - "s3:GetBucketLocation"
+                Resource: !GetAtt EventStore.Arn
+              - Effect: Allow
+                Action:
+                  - "s3:PutObject"
+                  - "s3:GetObject"
+                  - "s3:AbortMultipartUpload"
+                  - "s3:ListMultipartUploadParts"
+                  - "s3:ListBucketMultipartUploads"
+                  - "s3:DeleteObject"
+                  - "s3:DeleteObjects"
+                Resource: "*"
+              - Effect: "Allow"
+                Action:
+                  - "kafka-cluster:Connect"
+                  - "kafka-cluster:DescribeCluster"
+                Resource: !Ref MSKCluster
+              - Effect: "Allow"
+                Action:
+                  - "kafka-cluster:ReadData"
+                  - "kafka-cluster:DescribeTopic"
+                Resource: "*"
+              - Effect: "Allow"
+                Action:
+                  - "kafka-cluster:WriteData"
+                  - "kafka-cluster:DescribeTopic"
+                Resource: "*"
+              - Effect: "Allow"
+                Action:
+                  - "kafka-cluster:CreateTopic"
+                  - "kafka-cluster:WriteData"
+                  - "kafka-cluster:ReadData"
+                  - "kafka-cluster:DescribeTopic"
+                Resource: "*"
+              - Effect: "Allow"
+                Action:
+                  - "kafka-cluster:AlterGroup"
+                  - "kafka-cluster:DescribeGroup"
+                Resource:
+                  - "*"
+              - Effect: "Allow"
+                Action:
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                  - "logs:DescribeLogStreams"
+                Resource: "arn:aws:logs:*:*:*"
+
+  KafkaConnectPluginLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Path: /
+      Policies:
+        - PolicyName: KafkaConnect
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "kafkaconnect:createCustomPlugin"
+                  - "kafkaconnect:describeCustomPlugin"
+                  - "kafkaconnect:deleteCustomPlugin"
+                  - "kafkaconnect:listCustomPlugins"
+                Resource: "*"
+        - PolicyName: KafkaConnectS3
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "s3:ListAllMyBuckets"
+                Resource: "arn:aws:s3:::*"
+              - Effect: Allow
+                Action:
+                  - "s3:ListBucket"
+                  - "s3:GetBucketLocation"
+                Resource: !GetAtt EventStore.Arn
+              - Effect: Allow
+                Action:
+                  - "s3:GetObject"
+                Resource: "*"
+
+  KafkaConnectPluginUploadLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Path: /
+      Policies:
+        - PolicyName: KafkaConnectS3
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "s3:ListAllMyBuckets"
+                Resource: "arn:aws:s3:::*"
+              - Effect: Allow
+                Action:
+                  - "s3:ListBucket"
+                  - "s3:GetBucketLocation"
+                Resource: !GetAtt EventStore.Arn
+              - Effect: Allow
+                Action:
+                  - "s3:PutObject"
+                Resource: "*"
+
+  KafkaConnectGetBrokerLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Path: /
+      Policies:
+        - PolicyName: KafkaBroker
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "kafka:GetBootstrapBrokers"
+                  - "kafka:DescribeCluster"
+                Resource: !Ref MSKCluster
+
+  KafkaLogGroup:
+    Type: AWS::Logs::LogGroup
+
+  S3Endpoint:
+    Type: "AWS::EC2::VPCEndpoint"
+    Properties:
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal: "*"
+            Action:
+              - "s3:ListAllMyBuckets"
+            Resource: "arn:aws:s3:::*"
+          - Effect: Allow
+            Principal: "*"
+            Action:
+              - "s3:ListBucket"
+              - "s3:GetBucketLocation"
+            Resource: !GetAtt EventStore.Arn
+          - Effect: Allow
+            Principal: "*"
+            Action:
+              - "s3:PutObject"
+              - "s3:GetObject"
+              - "s3:AbortMultipartUpload"
+              - "s3:ListMultipartUploadParts"
+              - "s3:ListBucketMultipartUploads"
+              - "s3:DeleteObject"
+              - "s3:DeleteObjects"
+            Resource: "*"
+      RouteTableIds:
+        - !Ref PrivateRouteTable1
+        - !Ref PrivateRouteTable2
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
+      VpcId: !Ref VPC
+
+  KafkaUploadPluginArtifactFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./upload-plugin
+      MemorySize: 512
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref EventStore
+          LOG_GROUP: !Ref KafkaLogGroup
+          BUCKET_ARN: !GetAtt EventStore.Arn
+          REGION: !Ref AWS::Region
+      Handler: index.lambda_handler
+      Runtime: nodejs14.x
+      Role: !GetAtt KafkaConnectPluginUploadLambdaRole.Arn
+      Timeout: 900
+
+  KafkaConnectCreatePluginFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: CustomKakfaPluginArtifact
+    Properties:
+      CodeUri: ./msk-plugin
+      MemorySize: 512
+      Environment:
+        Variables:
+          BUCKET_ARN: !GetAtt EventStore.Arn
+      Handler: index.lambda_handler
+      Runtime: nodejs14.x
+      Role: !GetAtt KafkaConnectPluginLambdaRole.Arn
+      Timeout: 900
+
+  GetBrokerEndpointFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./get-broker
+      MemorySize: 512
+      Environment:
+        Variables:
+          MSK_ENDPOINT: !Ref MSKCluster
+      Handler: index.lambda_handler
+      Runtime: nodejs14.x
+      Role: !GetAtt KafkaConnectGetBrokerLambdaRole.Arn
+      Timeout: 900
+
+  S3KafkaConnector:
+    Type: AWS::KafkaConnect::Connector
+    Properties:
+      Capacity:
+        ProvisionedCapacity:
+          McuCount: 2
+          WorkerCount: 2
+      ConnectorConfiguration:
+        connector.class: "io.confluent.connect.s3.S3SinkConnector"
+        s3.region: !Ref AWS::Region
+        flush.size: "1"
+        schema.compatibility: "NONE"
+        tasks.max: "2"
+        topics: "salesorder"
+        key.converter.schemas.enable: "false"
+        format.class: "io.confluent.connect.s3.format.json.JsonFormat"
+        partitioner.class: "io.confluent.connect.storage.partitioner.DefaultPartitioner"
+        value.converter.schemas.enable: "false"
+        value.converter: "org.apache.kafka.connect.json.JsonConverter"
+        storage.class: "io.confluent.connect.s3.storage.S3Storage"
+        s3.bucket.name: !Ref EventStore
+        key.converter: "org.apache.kafka.connect.storage.StringConverter"
+      ConnectorName: kafka-connect-s3-connector
+      KafkaCluster:
+        ApacheKafkaCluster:
+          BootstrapServers: !GetAtt CustomGetBroker.Broker
+          Vpc:
+            Subnets:
+              - !Ref PrivateSubnet1
+              - !Ref PrivateSubnet2
+            SecurityGroups:
+              - !GetAtt VPC.DefaultSecurityGroup
+      KafkaClusterClientAuthentication:
+        AuthenticationType: "NONE"
+      KafkaClusterEncryptionInTransit:
+        EncryptionType: "PLAINTEXT"
+      KafkaConnectVersion: "2.7.1"
+      Plugins:
+        - CustomPlugin:
+            CustomPluginArn: !GetAtt CustomKafkaPlugin.PluginArn
+            Revision: 1
+      ServiceExecutionRoleArn: !GetAtt KafkaS3ConnectorRole.Arn
+      LogDelivery:
+        WorkerLogDelivery:
+          CloudWatchLogs:
+            Enabled: true
+            LogGroup: !Ref KafkaLogGroup
+          Firehose:
+            Enabled: false
+          S3:
+            Enabled: false
+
+  CustomKafkaPlugin:
+    Type: Custom::KafkaPlugin
+    Properties:
+      ServiceToken: !GetAtt KafkaConnectCreatePluginFunction.Arn
+
+  CustomKakfaPluginArtifact:
+    Type: Custom::KafkaPluginArtifact
+    Properties:
+      ServiceToken: !GetAtt KafkaUploadPluginArtifactFunction.Arn
+
+  CustomGetBroker:
+    Type: Custom::GetBroker
+    Properties:
+      ServiceToken: !GetAtt GetBrokerEndpointFunction.Arn

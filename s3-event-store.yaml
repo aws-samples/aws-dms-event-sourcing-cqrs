@@ -1,0 +1,499 @@
+---
+Transform: AWS::Serverless-2016-10-31
+
+Parameters:
+  ReplicationInstanceClass:
+    Type: String
+    Default: dms.t2.small
+    AllowedPattern: "^dms\\.[a-z][0-9].[a-zA-Z0-9]*$"
+    Description: Enter replication instance class. Default is dms.t2.small
+  SourceDatabaseInstanceClass:
+    Type: String
+    Default: db.t3.small
+    AllowedPattern: "^db\\.[a-z][0-9].[a-zA-Z0-9]*$"
+    Description: Enter replication instance class. Default is db.t3.small
+  SourceDatabaseName:
+    Type: String
+    Default: postgres
+    Description: Source database name
+  EnvironmentName:
+    Description: An environment name that is prefixed to resource names
+    Type: String
+    Default: EventSourcing
+
+  VpcCIDR:
+    Description: Please enter the IP range (CIDR notation) for this VPC
+    Type: String
+    Default: 10.192.0.0/16
+
+  PublicSubnet1CIDR:
+    Description: Please enter the IP range (CIDR notation) for the public subnet in the first Availability Zone
+    Type: String
+    Default: 10.192.10.0/24
+
+  PublicSubnet2CIDR:
+    Description: Please enter the IP range (CIDR notation) for the public subnet in the second Availability Zone
+    Type: String
+    Default: 10.192.11.0/24
+
+  PrivateSubnet1CIDR:
+    Description: Please enter the IP range (CIDR notation) for the private subnet in the first Availability Zone
+    Type: String
+    Default: 10.192.20.0/24
+
+  PrivateSubnet2CIDR:
+    Description: Please enter the IP range (CIDR notation) for the private subnet in the second Availability Zone
+    Type: String
+    Default: 10.192.21.0/24
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Ref EnvironmentName
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Ref EnvironmentName
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Ref PublicSubnet1CIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Public Subnet (AZ1)
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Ref PublicSubnet2CIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Public Subnet (AZ2)
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Ref PrivateSubnet1CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Private Subnet (AZ1)
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Ref PrivateSubnet2CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Private Subnet (AZ2)
+
+  NatGateway1EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+
+  NatGateway2EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+
+  NatGateway1:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGateway1EIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+
+  NatGateway2:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGateway2EIP.AllocationId
+      SubnetId: !Ref PublicSubnet2
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Public Routes
+
+  DefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet2
+
+  PrivateRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Private Routes (AZ1)
+
+  DefaultPrivateRoute1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway1
+
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      SubnetId: !Ref PrivateSubnet1
+
+  PrivateRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Private Routes (AZ2)
+
+  DefaultPrivateRoute2:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway2
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      SubnetId: !Ref PrivateSubnet2
+
+  EventSourcingSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: "event-sourcing-sg"
+      GroupDescription: "Security group with rules to configure event sourcing"
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: !Ref VpcCIDR
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+  ReplicationSubnetGroup:
+    Properties:
+      ReplicationSubnetGroupDescription: !Ref EnvironmentName
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+    Type: "AWS::DMS::ReplicationSubnetGroup"
+
+  ReplicationInstance:
+    Properties:
+      ReplicationInstanceClass: !Ref ReplicationInstanceClass
+      PubliclyAccessible: false
+      ReplicationSubnetGroupIdentifier: !Ref ReplicationSubnetGroup
+      VpcSecurityGroupIds:
+        - !Ref EventSourcingSecurityGroup
+    Type: "AWS::DMS::ReplicationInstance"
+
+  DBSubnetGroup:
+    Properties:
+      DBSubnetGroupDescription: !Ref EnvironmentName
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+    Type: "AWS::RDS::DBSubnetGroup"
+
+  PostgreSQLSource:
+    Type: "AWS::RDS::DBInstance"
+    Properties:
+      DBInstanceIdentifier: !Ref EnvironmentName
+      DBName: !Ref SourceDatabaseName
+      DBInstanceClass: !Ref SourceDatabaseInstanceClass
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      DeletionProtection: true
+      AllocatedStorage: "100"
+      Engine: postgres
+      EngineVersion: "13.4"
+      MasterUsername: !Sub "{{resolve:secretsmanager:${DbAdminPassword}::username}}"
+      MasterUserPassword: !Sub "{{resolve:secretsmanager:${DbAdminPassword}::password}}"
+      DBParameterGroupName: !Ref RDSDBParameterGroup
+      PubliclyAccessible: false
+      StorageEncrypted: true
+      StorageType: gp2
+      VPCSecurityGroups:
+        - !Ref EventSourcingSecurityGroup
+
+  PostgreSQLSourceEndpoint:
+    Properties:
+      DatabaseName: !Ref SourceDatabaseName
+      EndpointType: source
+      EngineName: postgres
+      ExtraConnectionAttributes: "PluginName=test_decoding"
+      Password: !Sub "{{resolve:secretsmanager:${DbAdminPassword}::password}}"
+      Port: 5432
+      ServerName: !GetAtt PostgreSQLSource.Endpoint.Address
+      Username: !Sub "{{resolve:secretsmanager:${DbAdminPassword}::username}}"
+    Type: "AWS::DMS::Endpoint"
+
+  EventStore:
+    Type: "AWS::S3::Bucket"
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - BucketKeyEnabled: true
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  DMSEventStoreRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - dms.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      Path: /
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  [
+                    "s3:ListBucket",
+                    "s3:GetObject",
+                    "s3:DeleteObject",
+                    "s3:PutObject",
+                  ]
+                Resource:
+                  - !Join ["", ["arn:aws:s3:::", !Ref EventStore]]
+                  - !Join ["", ["arn:aws:s3:::", !Ref EventStore, /*]]
+
+  DMSDDBRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - dms.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      Path: /
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  [
+                    "dynamodb:PutItem",
+                    "dynamodb:CreateTable",
+                    "dynamodb:DescribeTable",
+                    "dynamodb:DeleteTable",
+                    "dynamodb:DeleteItem",
+                    "dynamodb:UpdateItem",
+                    "dynamodb:ListTables",
+                  ]
+                Resource: "*"
+
+  S3FullLoadTargetEndpoint:
+    Properties:
+      EndpointType: target
+      EngineName: s3
+      S3Settings:
+        BucketName: !Ref EventStore
+        ServiceAccessRoleArn: !GetAtt DMSEventStoreRole.Arn
+    Type: "AWS::DMS::Endpoint"
+
+  S3CDCTargetEndpoint:
+    Properties:
+      EndpointType: target
+      EngineName: s3
+      ExtraConnectionAttributes: PreserveTransactions=true;CdcPath=cdc
+      S3Settings:
+        BucketFolder: cdc
+        BucketName: !Ref EventStore
+        ServiceAccessRoleArn: !GetAtt DMSEventStoreRole.Arn
+    Type: "AWS::DMS::Endpoint"
+
+  S3SourceEndpoint:
+    Properties:
+      EndpointType: source
+      EngineName: s3
+      ExtraConnectionAttributes: cdcPath=cdc/cdc;compressionType=NONE;datePartitionEnabled=false;
+      S3Settings:
+        BucketName: !Ref EventStore
+        ExternalTableDefinition: "{\n    \"TableCount\": \"1\",\n    \"Tables\": [\n        {\n            \"TableName\": \"salesorder\",\n            \"TablePath\": \"public/salesorder/\",\n            \"TableOwner\": \"public\",\n            \"TableColumns\": [\n                {\n                    \"ColumnName\": \"sales_order_id\",\n                    \"ColumnType\": \"INT8\",\n                    \"ColumnNullable\": \"false\",\n                    \"ColumnIsPk\": \"true\"\n                },\n                {\n                    \"ColumnName\": \"subtotal\",\n        \"ColumnType\": \"NUMERIC\",\n        \"ColumnPrecision\": \"19\",\n        \"ColumnScale\": \"4\"\n                },\n                {\n                    \"ColumnName\": \"order_date\",\n                    \"ColumnType\": \"DATETIME\"\n                }\n            ],\n            \"TableColumnsTotal\": \"3\"\n        }\n    ]\n}"
+        ServiceAccessRoleArn: !GetAtt DMSEventStoreRole.Arn
+    Type: "AWS::DMS::Endpoint"
+
+  DynamoDBTargetEndpoint:
+    Properties:
+      EndpointType: target
+      EngineName: dynamodb
+      DynamoDbSettings:
+        ServiceAccessRoleArn: !GetAtt DMSDDBRole.Arn
+    Type: "AWS::DMS::Endpoint"
+
+  RDSToS3FullLoad:
+    Properties:
+      MigrationType: full-load
+      ReplicationInstanceArn: !Ref ReplicationInstance
+      SourceEndpointArn: !Ref PostgreSQLSourceEndpoint
+      TableMappings: '{ "rules": [ { "rule-type": "selection", "rule-id": "1", "rule-name": "1", "object-locator": { "schema-name": "%", "table-name": "%" }, "rule-action": "include" } ] }'
+      TargetEndpointArn: !Ref S3FullLoadTargetEndpoint
+    Type: "AWS::DMS::ReplicationTask"
+
+  RDSToS3CDC:
+    Properties:
+      MigrationType: cdc
+      ReplicationInstanceArn: !Ref ReplicationInstance
+      SourceEndpointArn: !Ref PostgreSQLSourceEndpoint
+      TableMappings: '{ "rules": [ { "rule-type": "selection", "rule-id": "1", "rule-name": "1", "object-locator": { "schema-name": "%", "table-name": "%" }, "rule-action": "include" } ] }'
+      TargetEndpointArn: !Ref S3CDCTargetEndpoint
+    Type: "AWS::DMS::ReplicationTask"
+
+  S3ToDynamoDB:
+    Properties:
+      MigrationType: full-load-and-cdc
+      ReplicationInstanceArn: !Ref ReplicationInstance
+      SourceEndpointArn: !Ref S3SourceEndpoint
+      TableMappings: '{ "rules": [ { "rule-type": "selection", "rule-id": "1", "rule-name": "1", "object-locator": { "schema-name": "%", "table-name": "%" }, "rule-action": "include" } ] }'
+      TargetEndpointArn: !Ref DynamoDBTargetEndpoint
+    Type: "AWS::DMS::ReplicationTask"
+
+  GenerateLoadLambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./loadgenerator
+      Handler: index.lambda_handler
+      Runtime: nodejs14.x
+      Environment:
+        Variables:
+          SERVER: !GetAtt PostgreSQLSource.Endpoint.Address
+          USER: !Sub "{{resolve:secretsmanager:${DbAdminPassword}::username}}"
+          PWORD: !Sub "{{resolve:secretsmanager:${DbAdminPassword}::password}}"
+      VpcConfig:
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+        SecurityGroupIds:
+          - !GetAtt VPC.DefaultSecurityGroup
+      Timeout: 30
+
+  LoadGenRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - events.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      Path: "/"
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ["lambda:InvokeFunction", "lambda:InvokeFunctionAsync"]
+                Resource: [!GetAtt GenerateLoadLambdaFunction.Arn]
+
+  LoadGenRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: "Execute Lambda Function Every Minute"
+      RoleArn: !GetAtt LoadGenRole.Arn
+      ScheduleExpression: rate(1 minute)
+      Targets:
+        - Id: LambdaFunction
+          Arn: !GetAtt GenerateLoadLambdaFunction.Arn
+
+  LoadGenPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt GenerateLoadLambdaFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt LoadGenRule.Arn
+
+  DbAdminPassword:
+    Type: "AWS::SecretsManager::Secret"
+    Properties:
+      Description: "This secret has a dynamically generated secret password."
+      GenerateSecretString:
+        SecretStringTemplate: '{"username": "opsadmin"}'
+        GenerateStringKey: "password"
+        PasswordLength: 30
+        ExcludeCharacters: '"@/\!;$+%:`'''
+
+  RDSDBParameterGroup:
+    Type: "AWS::RDS::DBParameterGroup"
+    Properties:
+      Description: Postgres with Replication
+      Family: postgres13
+      Parameters:
+        rds.logical_replication: "1"
