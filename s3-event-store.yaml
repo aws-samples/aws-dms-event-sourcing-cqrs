@@ -355,12 +355,22 @@ Resources:
                   ]
                 Resource: "*"
 
-  S3TargetEndpoint:
+  S3FullLoadTargetEndpoint:
+    Properties:
+      EndpointType: target
+      EngineName: s3
+      S3Settings:
+        BucketName: !Ref EventStore
+        ServiceAccessRoleArn: !GetAtt DMSEventStoreRole.Arn
+    Type: "AWS::DMS::Endpoint"
+
+  S3CDCTargetEndpoint:
     Properties:
       EndpointType: target
       EngineName: s3
       ExtraConnectionAttributes: PreserveTransactions=true;CdcPath=cdc
       S3Settings:
+        BucketFolder: cdc
         BucketName: !Ref EventStore
         ServiceAccessRoleArn: !GetAtt DMSEventStoreRole.Arn
     Type: "AWS::DMS::Endpoint"
@@ -369,7 +379,7 @@ Resources:
     Properties:
       EndpointType: source
       EngineName: s3
-      ExtraConnectionAttributes: cdcPath=cdc;compressionType=NONE;datePartitionEnabled=false;
+      ExtraConnectionAttributes: cdcPath=cdc/cdc;compressionType=NONE;datePartitionEnabled=false;
       S3Settings:
         BucketName: !Ref EventStore
         ExternalTableDefinition: "{\n    \"TableCount\": \"1\",\n    \"Tables\": [\n        {\n            \"TableName\": \"salesorder\",\n            \"TablePath\": \"public/salesorder/\",\n            \"TableOwner\": \"public\",\n            \"TableColumns\": [\n                {\n                    \"ColumnName\": \"sales_order_id\",\n                    \"ColumnType\": \"INT8\",\n                    \"ColumnNullable\": \"false\",\n                    \"ColumnIsPk\": \"true\"\n                },\n                {\n                    \"ColumnName\": \"subtotal\",\n        \"ColumnType\": \"NUMERIC\",\n        \"ColumnPrecision\": \"19\",\n        \"ColumnScale\": \"4\"\n                },\n                {\n                    \"ColumnName\": \"order_date\",\n                    \"ColumnType\": \"DATETIME\"\n                }\n            ],\n            \"TableColumnsTotal\": \"3\"\n        }\n    ]\n}"
@@ -384,13 +394,22 @@ Resources:
         ServiceAccessRoleArn: !GetAtt DMSDDBRole.Arn
     Type: "AWS::DMS::Endpoint"
 
-  RDSToS3:
+  RDSToS3FullLoad:
     Properties:
-      MigrationType: full-load-and-cdc
+      MigrationType: full-load
       ReplicationInstanceArn: !Ref ReplicationInstance
       SourceEndpointArn: !Ref PostgreSQLSourceEndpoint
       TableMappings: '{ "rules": [ { "rule-type": "selection", "rule-id": "1", "rule-name": "1", "object-locator": { "schema-name": "%", "table-name": "%" }, "rule-action": "include" } ] }'
-      TargetEndpointArn: !Ref S3TargetEndpoint
+      TargetEndpointArn: !Ref S3FullLoadTargetEndpoint
+    Type: "AWS::DMS::ReplicationTask"
+
+  RDSToS3CDC:
+    Properties:
+      MigrationType: cdc
+      ReplicationInstanceArn: !Ref ReplicationInstance
+      SourceEndpointArn: !Ref PostgreSQLSourceEndpoint
+      TableMappings: '{ "rules": [ { "rule-type": "selection", "rule-id": "1", "rule-name": "1", "object-locator": { "schema-name": "%", "table-name": "%" }, "rule-action": "include" } ] }'
+      TargetEndpointArn: !Ref S3CDCTargetEndpoint
     Type: "AWS::DMS::ReplicationTask"
 
   S3ToDynamoDB:
