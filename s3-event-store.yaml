@@ -389,7 +389,10 @@ Resources:
       MigrationType: full-load-and-cdc
       ReplicationInstanceArn: !Ref ReplicationInstance
       SourceEndpointArn: !Ref PostgreSQLSourceEndpoint
-      TableMappings: '{ "rules": [ { "rule-type": "selection", "rule-id": "1", "rule-name": "1", "object-locator": { "schema-name": "%", "table-name": "%" }, "rule-action": "include" } ] }'
+      TableMappings: >-
+        { "rules": [ { "rule-type": "selection", "rule-id": "1", "rule-name":
+        "1", "object-locator": { "schema-name": "public", "table-name":
+        "salesorder" }, "rule-action": "include" } ]}
       TargetEndpointArn: !Ref S3TargetEndpoint
     Type: "AWS::DMS::ReplicationTask"
 
