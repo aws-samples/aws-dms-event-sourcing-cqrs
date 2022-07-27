@@ -1,5 +1,7 @@
 ---
-Transform: AWS::Serverless-2016-10-31
+AWSTemplateFormatVersion: "2010-09-09"
+
+Transform: [AWS::Serverless-2016-10-31]
 
 Parameters:
   ReplicationInstanceClass:
@@ -56,6 +58,40 @@ Resources:
       Tags:
         - Key: Name
           Value: !Ref EnvironmentName
+
+  VPCFlowLog:
+    Type: AWS::EC2::FlowLog
+    Properties:
+      DeliverLogsPermissionArn: !GetAtt FlowLogRole.Arn
+      LogGroupName: FlowLogsGroup
+      ResourceId: !Ref VPC
+      ResourceType: VPC
+      TrafficType: ALL
+
+  FlowLogRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: vpc-flow-logs.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: Logs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                  - "logs:DescribeLogGroups"
+                  - "logs:DescribeLogStreams"
+                Resource: ["*"]
 
   InternetGateway:
     Type: AWS::EC2::InternetGateway
@@ -391,7 +427,7 @@ Resources:
       SourceEndpointArn: !Ref PostgreSQLSourceEndpoint
       TableMappings: >-
         { "rules": [ { "rule-type": "selection", "rule-id": "1", "rule-name":
-        "1", "object-locator": { "schema-name": "public", "table-name":
+        "1", "object-locator": { "schema-name": "%", "table-name":
         "salesorder" }, "rule-action": "include" } ]}
       TargetEndpointArn: !Ref S3TargetEndpoint
     Type: "AWS::DMS::ReplicationTask"
@@ -472,7 +508,7 @@ Resources:
         SecretStringTemplate: '{"username": "opsadmin"}'
         GenerateStringKey: "password"
         PasswordLength: 30
-        ExcludeCharacters: '"@/\!;$+%:`'''
+        ExcludeCharacters: "\"@/\\!;$+%:`'"
 
   RDSDBParameterGroup:
     Type: "AWS::RDS::DBParameterGroup"

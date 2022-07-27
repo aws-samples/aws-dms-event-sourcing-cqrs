@@ -7,12 +7,13 @@ const https = require("follow-redirects").https;
 const s3 = new AWS.S3();
 const axios = require("axios");
 
-const uploadFile = async (fileName) => {
+const uploadFile = async (fileName, accountId) => {
   const fileContent = fs.readFileSync(fileName);
   const params = {
     Bucket: process.env.BUCKET_NAME,
     Key: fileName,
     Body: fileContent,
+    ExpectedBucketOwner: accountId,
   };
   return new Promise((resolve, reject) => {
     s3.upload(params, function (err, data) {
@@ -48,12 +49,14 @@ exports.lambda_handler = async (event, context) => {
     return;
   }
 
+  const accountId = context.invokedFunctionArn.split(":")[4];
+
   try {
     // Download connector code & stage in S3 bucket
     await downloadFile(
       `https://d1i4a15mxbxib1.cloudfront.net/api/plugins/confluentinc/kafka-connect-s3/versions/10.0.5/confluentinc-kafka-connect-s3-10.0.5.zip`
     );
-    await uploadFile("/tmp/kafka-connect.zip");
+    await uploadFile("/tmp/kafka-connect.zip", accountId);
     await sendResponse(event, context, "SUCCESS");
   } catch (e) {
     console.log(e);
