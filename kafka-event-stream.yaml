@@ -768,9 +768,6 @@ Resources:
               - Effect: Allow
                 Action:
                   - "s3:ListAllMyBuckets"
-                Resource: "arn:aws:s3:::*"
-              - Effect: Allow
-                Action:
                   - "s3:ListBucket"
                   - "s3:GetBucketLocation"
                   - "s3:PutObject"
@@ -844,9 +841,6 @@ Resources:
               - Effect: Allow
                 Action:
                   - "s3:ListAllMyBuckets"
-                Resource: "arn:aws:s3:::*"
-              - Effect: Allow
-                Action:
                   - "s3:ListBucket"
                   - "s3:GetBucketLocation"
                   - "s3:GetObject"
@@ -875,9 +869,6 @@ Resources:
               - Effect: Allow
                 Action:
                   - "s3:ListAllMyBuckets"
-                Resource: "arn:aws:s3:::*"
-              - Effect: Allow
-                Action:
                   - "s3:ListBucket"
                   - "s3:GetBucketLocation"
                   - "s3:PutObject"
@@ -922,10 +913,6 @@ Resources:
             Principal: "*"
             Action:
               - "s3:ListAllMyBuckets"
-            Resource: "arn:aws:s3:::*"
-          - Effect: Allow
-            Principal: "*"
-            Action:
               - "s3:ListBucket"
               - "s3:GetBucketLocation"
               - "s3:PutObject"

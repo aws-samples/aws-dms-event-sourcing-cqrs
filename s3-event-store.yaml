@@ -387,8 +387,42 @@ Resources:
                     "dynamodb:DeleteTable",
                     "dynamodb:DeleteItem",
                     "dynamodb:UpdateItem",
-                    "dynamodb:ListTables",
                   ]
+                Resource:
+                  [
+                    !Join [
+                      "",
+                      [
+                        "arn:aws:dynamodb:",
+                        !Ref "AWS::Region",
+                        ":",
+                        !Ref "AWS::AccountId",
+                        ":table/*",
+                      ],
+                    ],
+                    !Join [
+                      "",
+                      [
+                        "arn:aws:dynamodb:",
+                        !Ref "AWS::Region",
+                        ":",
+                        !Ref "AWS::AccountId",
+                        ":table/awsdms_apply_exceptions",
+                      ],
+                    ],
+                    !Join [
+                      "",
+                      [
+                        "arn:aws:dynamodb:",
+                        !Ref "AWS::Region",
+                        ":",
+                        !Ref "AWS::AccountId",
+                        ":table/awsdms_full_load_exceptions",
+                      ],
+                    ],
+                  ]
+              - Effect: Allow
+                Action: ["dynamodb:ListTables"]
                 Resource: "*"
 
   S3TargetEndpoint:
