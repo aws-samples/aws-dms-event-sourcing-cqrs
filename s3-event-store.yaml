@@ -397,7 +397,7 @@ Resources:
                         !Ref "AWS::Region",
                         ":",
                         !Ref "AWS::AccountId",
-                        ":table/*",
+                        ":table/salesorder",
                       ],
                     ],
                     !Join [
