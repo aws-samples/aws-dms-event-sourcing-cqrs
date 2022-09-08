@@ -15,7 +15,8 @@ sam deploy --guided -t dms-vpc-role.yaml --capabilities CAPABILITY_NAMED_IAM
 To deploy the DMS only solution:
 
 ```
-sam deploy --guided -t s3-event-store.yaml
+sam build -t s3-event-store.yaml --use-container
+sam deploy --guided
 ```
 
 To deploy the DMS + Amazon Managed Streaming for Apache Kafka (MSK) solution:
