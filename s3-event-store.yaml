@@ -14,10 +14,6 @@ Parameters:
     Default: db.t3.small
     AllowedPattern: "^db\\.[a-z][0-9].[a-zA-Z0-9]*$"
     Description: Enter replication instance class. Default is db.t3.small
-  SourceDatabaseName:
-    Type: String
-    Default: postgres
-    Description: Source database name
   EnvironmentName:
     Description: An environment name that is prefixed to resource names
     Type: String
@@ -290,7 +286,7 @@ Resources:
     Type: "AWS::RDS::DBInstance"
     Properties:
       DBInstanceIdentifier: !Ref EnvironmentName
-      DBName: !Ref SourceDatabaseName
+      DBName: postgres
       DBInstanceClass: !Ref SourceDatabaseInstanceClass
       DBSubnetGroupName: !Ref DBSubnetGroup
       DeletionProtection: true
@@ -308,7 +304,7 @@ Resources:
 
   PostgreSQLSourceEndpoint:
     Properties:
-      DatabaseName: !Ref SourceDatabaseName
+      DatabaseName: postgres
       EndpointType: source
       EngineName: postgres
       ExtraConnectionAttributes: "PluginName=test_decoding"
